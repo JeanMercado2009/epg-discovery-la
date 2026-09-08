@@ -131,7 +131,7 @@ def corregir_texto(texto):
     reemplazos = {
         'Ã±': 'ñ', 'Ã‘': 'Ñ', 'Ã¡': 'á', 'Ã©': 'é', 'Ã': 'í', 'Ã³': 'ó', 'Ãº': 'ú',
         'Ã': 'Á', 'Ã‰': 'É', 'Ã': 'Í', 'Ã“': 'Ó', 'Ãš': 'Ú', 'â€™': "'", 'â€œ': '"',
-        'â€': '"', 'Â': ''
+        'â€': '"', 'Â': '', 'Ãª': 'e', 'ÃI': 'Í', 'ÃA': 'Á', 'Ãi': 'í'
     }
     for k, v in reemplazos.items():
         texto = texto.replace(k, v)
@@ -157,21 +157,20 @@ def parse_xmltv_date(date_str, tz_info):
     y, m, d, hh, mm, ss = map(int, match.groups())
     return datetime(y, m, d, min(hh, 23), min(mm, 59), min(ss, 59), tzinfo=tz_info)
 
-def parse_time_robust(date_str, time_str, tz):
-    """Parsea fecha y horas extendidas (ej: 24:30) incrementando días correspondientes."""
-    parts = time_str.strip().split(":")
-    if len(parts) < 2:
-        raise ValueError(f"Hora inválida: {time_str}")
+def parse_time_hhmm(date_str, time_str, tz):
+    """Parsea fecha YYYY/MM/DD o YYYY-MM-DD y horas en formato HHMM (ej: 0600, 2411)."""
+    clean_date = str(date_str).replace("-", "/").strip()
+    clean_time = str(time_str).strip().zfill(4)
     
-    hh, mm = int(parts[0]), int(parts[1])
-    ss = int(parts[2]) if len(parts) > 2 else 0
+    hh = int(clean_time[:2])
+    mm = int(clean_time[2:4])
 
-    base_date = datetime.strptime(date_str.strip(), "%Y-%m-%d")
+    base_date = datetime.strptime(clean_date, "%Y/%m/%d")
     
     extra_days = hh // 24
     hh = hh % 24
 
-    dt = base_date + timedelta(days=extra_days, hours=hh, minutes=mm, seconds=ss)
+    dt = base_date + timedelta(days=extra_days, hours=hh, minutes=mm)
     return dt.replace(tzinfo=tz)
 
 def process_discovery_csv(root, feed_cfg, csv_path):
@@ -186,27 +185,26 @@ def process_discovery_csv(root, feed_cfg, csv_path):
         disp = ET.SubElement(ch_node, "display-name")
         disp.text = channel_name
 
+    # Cargar CSV delimitado por comas
     try:
-        df = pd.read_csv(csv_path, sep='\t', encoding='utf-8', on_bad_lines='skip')
-        if len(df.columns) <= 1:
-            df = pd.read_csv(csv_path, sep=None, engine='python', encoding='utf-8')
+        df = pd.read_csv(csv_path, sep=',', encoding='utf-8', on_bad_lines='skip')
     except Exception:
-        df = pd.read_csv(csv_path, sep='\t', encoding='latin-1', on_bad_lines='skip')
+        df = pd.read_csv(csv_path, sep=',', encoding='latin-1', on_bad_lines='skip')
 
     df.columns = df.columns.str.strip()
 
     new_programmes = []
     for _, row in df.iterrows():
         try:
-            date_str = str(row.get("SCHEDULE_DATE", "")).replace("/", "-").strip()
+            date_str = str(row.get("SCHEDULE_DATE", "")).strip()
             start_str = str(row.get("START_TIME", "")).strip()
             end_str = str(row.get("END_TIME", "")).strip()
 
-            if not date_str or not start_str or not end_str:
+            if not date_str or not start_str or not end_str or date_str.lower() == "nan":
                 continue
 
-            dt_start = parse_time_robust(date_str, start_str, tz)
-            dt_stop = parse_time_robust(date_str, end_str, tz)
+            dt_start = parse_time_hhmm(date_str, start_str, tz)
+            dt_stop = parse_time_hhmm(date_str, end_str, tz)
 
             if dt_stop <= dt_start:
                 dt_stop += timedelta(days=1)
@@ -217,6 +215,9 @@ def process_discovery_csv(root, feed_cfg, csv_path):
 
             title_final = series_name if series_name else prog_name
             subtitle_final = prog_name if series_name and series_name.lower() != prog_name.lower() else ""
+
+            if not title_final:
+                continue
 
             prog = ET.Element("programme", {
                 "start": format_xmltv_date(dt_start, tz_str),
@@ -240,11 +241,13 @@ def process_discovery_csv(root, feed_cfg, csv_path):
             continue
 
     existing_starts = {p.attrib.get("start") for p in root.findall("programme") if p.attrib.get("channel") == channel_id}
+    added_count = 0
     for np in new_programmes:
         if np.attrib.get("start") not in existing_starts:
             root.append(np)
+            added_count += 1
 
-    print(f"[{channel_id}] Eventos procesados desde CSV: {len(new_programmes)}")
+    print(f"[{channel_id}] Eventos procesados desde CSV: {len(new_programmes)} (Nuevos agregados: {added_count})")
 
 def main():
     token = login_and_get_token()

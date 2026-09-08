@@ -40,6 +40,14 @@ DISCOVERY_NETWORKS = {
                 "tz_str": "-0600"
             },
             {
+                "file_pattern": "Discovery_Kids_Caribe",
+                "channel_id": "DKLA_CAR.co",
+                "channel_name": "Discovery Kids Caribe",
+                "lang": "es",
+                "tz": timezone(timedelta(hours=-5)),
+                "tz_str": "-0500"
+            },
+            {
                 "file_pattern": "Discovery_Kids_Brazil",
                 "channel_id": "DKLA_BR.br",
                 "channel_name": "Discovery Kids Brasil",
@@ -101,7 +109,7 @@ def get_latest_csv_path(token, network_id, pattern, referer_url):
             matching_files.append(f)
 
     if not matching_files:
-        raise Exception(f"No se encontró archivo CSV que coincida con la patron '{pattern}'")
+        raise Exception(f"No se encontró archivo CSV que coincida con el patrón '{pattern}'")
 
     # Ordenar por fecha de modificación o ID de archivo
     latest_file = sorted(matching_files, key=lambda x: x.get("lastModified", x.get("id", "")), reverse=True)[0]
@@ -149,7 +157,7 @@ def parse_xmltv_date(date_str, tz_info):
     if not match:
         return None
     y, m, d, hh, mm, ss = map(int, match.groups())
-    return datetime(y, m, d, min(hh,23), min(mm,59), min(ss,59), tzinfo=tz_info)
+    return datetime(y, m, d, min(hh, 23), min(mm, 59), min(ss, 59), tzinfo=tz_info)
 
 def process_discovery_csv(root, feed_cfg, csv_path):
     channel_id = feed_cfg["channel_id"]

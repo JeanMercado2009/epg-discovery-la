@@ -158,7 +158,6 @@ def parse_xmltv_date(date_str, tz_info):
     return datetime(y, m, d, min(hh, 23), min(mm, 59), min(ss, 59), tzinfo=tz_info)
 
 def parse_time_hhmm(date_str, time_str, tz):
-    """Parsea fecha YYYY/MM/DD o YYYY-MM-DD y horas en formato HHMM (ej: 0600, 2411)."""
     clean_date = str(date_str).replace("-", "/").strip()
     clean_time = str(time_str).strip().zfill(4)
     
@@ -185,7 +184,6 @@ def process_discovery_csv(root, feed_cfg, csv_path):
         disp = ET.SubElement(ch_node, "display-name")
         disp.text = channel_name
 
-    # Cargar CSV delimitado por comas
     try:
         df = pd.read_csv(csv_path, sep=',', encoding='utf-8', on_bad_lines='skip')
     except Exception:

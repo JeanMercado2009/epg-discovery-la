@@ -1,6 +1,7 @@
 import os
 import re
 import json
+import urllib.parse  # <--- Agregar esta importación
 import requests
 import pandas as pd
 from datetime import datetime, timedelta, timezone

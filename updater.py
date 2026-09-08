@@ -12,8 +12,8 @@ import xml.etree.ElementTree as ET
 RETENTION_DAYS = 15
 
 AUTH_URL = "https://epg.tapkit.warnermedia.com/api/security/oauth/token"
-FILES_URL = "https://epg.tapkit.warnermedia.com/api/getepakfiles?networkId={network_id}&format=CSV"
-DOWNLOAD_URL = "https://epg.tapkit.warnermedia.com/api/downloadfiles"
+FILES_URL = "https://epg.tapkit.warnermedia.com/api/domain/networkgrids/getepakfiles?networkId={network_id}&format=csv"
+DOWNLOAD_URL = "https://epg.tapkit.warnermedia.com/api/epg/tapkitFrontEnd/networksepg/downloadfiles"
 
 # Mapeo de redes Discovery en Tapkit (Network 47 = Discovery Kids)
 DISCOVERY_NETWORKS = {
@@ -91,23 +91,18 @@ def login_and_get_token():
     return token
 
 def get_latest_csv_path(token, network_id, pattern, referer_url):
-    # Tapkit usa headers de autenticación específicos para /api/getepakfiles
-    auth_headers = [
-        {**COMMON_HEADERS, "token": token, "Referer": referer_url},
-        {**COMMON_HEADERS, "x-access-token": token, "Referer": referer_url},
-        {**COMMON_HEADERS, "Authorization": f"Bearer {token}", "Referer": referer_url}
-    ]
+    headers = {
+        **COMMON_HEADERS,
+        "Authorization": f"Bearer {token}",
+        "Referer": referer_url,
+        "Content-Type": "application/json"
+    }
 
-    res = None
-    for headers in auth_headers:
-        r = requests.get(FILES_URL.format(network_id=network_id), headers=headers, timeout=30)
-        if r.status_code == 200:
-            res = r
-            valid_headers = headers
-            break
+    session_user_val = urllib.parse.quote(json.dumps({"accessToken": token}))
+    cookies = {"session_user": session_user_val}
 
-    if res is None or res.status_code != 200:
-        raise Exception(f"HTTP {res.status_code if res else '404'}: No se pudo autenticar la consulta de archivos.")
+    res = requests.get(FILES_URL.format(network_id=network_id), headers=headers, cookies=cookies, timeout=30)
+    res.raise_for_status()
 
     files_data = res.json()
     if isinstance(files_data, dict):
@@ -127,17 +122,13 @@ def get_latest_csv_path(token, network_id, pattern, referer_url):
         raise Exception(f"No se encontró archivo CSV que coincida con el patrón '{pattern}'")
 
     latest_file = sorted(matching_files, key=lambda x: x.get("lastModified", x.get("id", "")), reverse=True)[0]
-    file_id = latest_file.get("id", latest_file.get("fileId"))
     file_name = latest_file.get("name", latest_file.get("filename", latest_file.get("fileName")))
+    file_path = latest_file.get("path", f"network-files/DISCKIDS/EPAK/FULL/{file_name}")
 
-    print(f"[OK] Archivo detectado para {pattern}: {file_name} (ID: {file_id})")
+    print(f"[OK] Archivo detectado para {pattern}: {file_name}")
 
-    dl_payload = {"ids": [file_id]} if file_id else {"files": [file_name]}
-    dl_res = requests.post(DOWNLOAD_URL, json=dl_payload, headers=valid_headers, timeout=60)
-    
-    if dl_res.status_code != 200:
-        dl_res = requests.get(f"{DOWNLOAD_URL}?id={file_id}", headers=valid_headers, timeout=60)
-    
+    dl_payload = [{"name": file_name, "path": file_path}]
+    dl_res = requests.post(DOWNLOAD_URL, json=dl_payload, headers=headers, cookies=cookies, timeout=60)
     dl_res.raise_for_status()
 
     local_path = f"{pattern}_latest.csv"
@@ -145,7 +136,7 @@ def get_latest_csv_path(token, network_id, pattern, referer_url):
         f.write(dl_res.content)
 
     return local_path
-
+    
 def corregir_texto(texto):
     if not isinstance(texto, str) or texto.lower() == "nan":
         return ""

@@ -91,20 +91,31 @@ def login_and_get_token():
     return token
 
 def get_latest_csv_path(token, network_id, pattern, referer_url):
-    headers = {
-        **COMMON_HEADERS,
-        "Authorization": f"Bearer {token}",
-        "Referer": referer_url
-    }
-    
-    res = requests.get(FILES_URL.format(network_id=network_id), headers=headers, timeout=30)
-    res.raise_for_status()
-    
+    # Tapkit usa headers de autenticación específicos para /api/getepakfiles
+    auth_headers = [
+        {**COMMON_HEADERS, "token": token, "Referer": referer_url},
+        {**COMMON_HEADERS, "x-access-token": token, "Referer": referer_url},
+        {**COMMON_HEADERS, "Authorization": f"Bearer {token}", "Referer": referer_url}
+    ]
+
+    res = None
+    for headers in auth_headers:
+        r = requests.get(FILES_URL.format(network_id=network_id), headers=headers, timeout=30)
+        if r.status_code == 200:
+            res = r
+            valid_headers = headers
+            break
+
+    if res is None or res.status_code != 200:
+        raise Exception(f"HTTP {res.status_code if res else '404'}: No se pudo autenticar la consulta de archivos.")
+
     files_data = res.json()
     if isinstance(files_data, dict):
         files_list = files_data.get("files", files_data.get("data", files_data.get("content", [])))
-    else:
+    elif isinstance(files_data, list):
         files_list = files_data
+    else:
+        files_list = []
 
     matching_files = []
     for f in files_list:
@@ -122,10 +133,10 @@ def get_latest_csv_path(token, network_id, pattern, referer_url):
     print(f"[OK] Archivo detectado para {pattern}: {file_name} (ID: {file_id})")
 
     dl_payload = {"ids": [file_id]} if file_id else {"files": [file_name]}
-    dl_res = requests.post(DOWNLOAD_URL, json=dl_payload, headers=headers, timeout=60)
+    dl_res = requests.post(DOWNLOAD_URL, json=dl_payload, headers=valid_headers, timeout=60)
     
     if dl_res.status_code != 200:
-        dl_res = requests.get(f"{DOWNLOAD_URL}?id={file_id}", headers=headers, timeout=60)
+        dl_res = requests.get(f"{DOWNLOAD_URL}?id={file_id}", headers=valid_headers, timeout=60)
     
     dl_res.raise_for_status()
 

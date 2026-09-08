@@ -12,8 +12,8 @@ import xml.etree.ElementTree as ET
 RETENTION_DAYS = 15
 
 AUTH_URL = "https://epg.tapkit.warnermedia.com/api/security/oauth/token"
-FILES_URL = "https://epg.tapkit.warnermedia.com/api/networks/{network_id}/files"
-DOWNLOAD_URL = "https://epg.tapkit.warnermedia.com/api/networks/{network_id}/files/download/{file_id}"
+FILES_URL = "https://epg.tapkit.warnermedia.com/api/getepakfiles?networkId={network_id}&format=CSV"
+DOWNLOAD_URL = "https://epg.tapkit.warnermedia.com/api/downloadfiles"
 
 # Mapeo de redes Discovery en Tapkit (Network 47 = Discovery Kids)
 DISCOVERY_NETWORKS = {
@@ -91,19 +91,24 @@ def login_and_get_token():
     return token
 
 def get_latest_csv_path(token, network_id, pattern, referer_url):
-    headers = {**COMMON_HEADERS, "Authorization": f"Bearer {token}", "Referer": referer_url}
+    headers = {
+        **COMMON_HEADERS,
+        "Authorization": f"Bearer {token}",
+        "Referer": referer_url
+    }
+    
     res = requests.get(FILES_URL.format(network_id=network_id), headers=headers, timeout=30)
     res.raise_for_status()
     
     files_data = res.json()
     if isinstance(files_data, dict):
-        files_list = files_data.get("files", files_data.get("data", []))
+        files_list = files_data.get("files", files_data.get("data", files_data.get("content", [])))
     else:
         files_list = files_data
 
     matching_files = []
     for f in files_list:
-        filename = f.get("name", f.get("filename", ""))
+        filename = f.get("name", f.get("filename", f.get("fileName", "")))
         if pattern.lower() in filename.lower() and filename.endswith(".csv"):
             matching_files.append(f)
 
@@ -111,12 +116,17 @@ def get_latest_csv_path(token, network_id, pattern, referer_url):
         raise Exception(f"No se encontró archivo CSV que coincida con el patrón '{pattern}'")
 
     latest_file = sorted(matching_files, key=lambda x: x.get("lastModified", x.get("id", "")), reverse=True)[0]
-    file_id = latest_file.get("id")
-    file_name = latest_file.get("name", latest_file.get("filename"))
+    file_id = latest_file.get("id", latest_file.get("fileId"))
+    file_name = latest_file.get("name", latest_file.get("filename", latest_file.get("fileName")))
 
     print(f"[OK] Archivo detectado para {pattern}: {file_name} (ID: {file_id})")
 
-    dl_res = requests.get(DOWNLOAD_URL.format(network_id=network_id, file_id=file_id), headers=headers, timeout=60)
+    dl_payload = {"ids": [file_id]} if file_id else {"files": [file_name]}
+    dl_res = requests.post(DOWNLOAD_URL, json=dl_payload, headers=headers, timeout=60)
+    
+    if dl_res.status_code != 200:
+        dl_res = requests.get(f"{DOWNLOAD_URL}?id={file_id}", headers=headers, timeout=60)
+    
     dl_res.raise_for_status()
 
     local_path = f"{pattern}_latest.csv"

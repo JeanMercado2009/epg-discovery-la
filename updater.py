@@ -15,8 +15,7 @@ AUTH_URL = "https://epg.tapkit.warnermedia.com/api/security/oauth/token"
 FILES_URL = "https://epg.tapkit.warnermedia.com/api/networks/{network_id}/files"
 DOWNLOAD_URL = "https://epg.tapkit.warnermedia.com/api/networks/{network_id}/files/download/{file_id}"
 
-# Mapeo de redes Discovery en Tapkit
-# Network 47 = Discovery Kids
+# Mapeo de redes Discovery en Tapkit (Network 47 = Discovery Kids)
 DISCOVERY_NETWORKS = {
     "DKLA_EPG.xml": {
         "network_id": 47,
@@ -111,7 +110,6 @@ def get_latest_csv_path(token, network_id, pattern, referer_url):
     if not matching_files:
         raise Exception(f"No se encontró archivo CSV que coincida con el patrón '{pattern}'")
 
-    # Ordenar por fecha de modificación o ID de archivo
     latest_file = sorted(matching_files, key=lambda x: x.get("lastModified", x.get("id", "")), reverse=True)[0]
     file_id = latest_file.get("id")
     file_name = latest_file.get("name", latest_file.get("filename"))
@@ -159,6 +157,23 @@ def parse_xmltv_date(date_str, tz_info):
     y, m, d, hh, mm, ss = map(int, match.groups())
     return datetime(y, m, d, min(hh, 23), min(mm, 59), min(ss, 59), tzinfo=tz_info)
 
+def parse_time_robust(date_str, time_str, tz):
+    """Parsea fecha y horas extendidas (ej: 24:30) incrementando días correspondientes."""
+    parts = time_str.strip().split(":")
+    if len(parts) < 2:
+        raise ValueError(f"Hora inválida: {time_str}")
+    
+    hh, mm = int(parts[0]), int(parts[1])
+    ss = int(parts[2]) if len(parts) > 2 else 0
+
+    base_date = datetime.strptime(date_str.strip(), "%Y-%m-%d")
+    
+    extra_days = hh // 24
+    hh = hh % 24
+
+    dt = base_date + timedelta(days=extra_days, hours=hh, minutes=mm, seconds=ss)
+    return dt.replace(tzinfo=tz)
+
 def process_discovery_csv(root, feed_cfg, csv_path):
     channel_id = feed_cfg["channel_id"]
     channel_name = feed_cfg["channel_name"]
@@ -166,13 +181,11 @@ def process_discovery_csv(root, feed_cfg, csv_path):
     tz = feed_cfg["tz"]
     tz_str = feed_cfg["tz_str"]
 
-    # Asegurar nodo del canal
     if not [ch for ch in root.findall("channel") if ch.attrib.get("id") == channel_id]:
         ch_node = ET.SubElement(root, "channel", {"id": channel_id})
         disp = ET.SubElement(ch_node, "display-name")
         disp.text = channel_name
 
-    # Cargar CSV por tabulaciones (\t)
     try:
         df = pd.read_csv(csv_path, sep='\t', encoding='utf-8', on_bad_lines='skip')
         if len(df.columns) <= 1:
@@ -192,8 +205,8 @@ def process_discovery_csv(root, feed_cfg, csv_path):
             if not date_str or not start_str or not end_str:
                 continue
 
-            dt_start = datetime.strptime(f"{date_str} {start_str}", "%Y-%m-%d %H:%M").replace(tzinfo=tz)
-            dt_stop = datetime.strptime(f"{date_str} {end_str}", "%Y-%m-%d %H:%M").replace(tzinfo=tz)
+            dt_start = parse_time_robust(date_str, start_str, tz)
+            dt_stop = parse_time_robust(date_str, end_str, tz)
 
             if dt_stop <= dt_start:
                 dt_stop += timedelta(days=1)
@@ -251,8 +264,10 @@ def main():
             except Exception as e:
                 print(f"[ERROR] No se pudo procesar {feed_cfg['file_pattern']}: {e}")
 
-        # Retención
-        cutoff_date = datetime.now(timezone.utc) - timedelta(days=RETENTION_DAYS)
+        # Retención: Eliminar eventos cuya fecha de fin 'stop' tenga más de 15 días de antigüedad
+        now_utc = datetime.now(timezone.utc)
+        cutoff_date = now_utc - timedelta(days=RETENTION_DAYS)
+
         for p in list(root.findall("programme")):
             ch_id = p.attrib.get("channel")
             if ch_id not in active_channel_ids:
@@ -260,10 +275,11 @@ def main():
                 continue
             cfg = next((c for c in net_config["feeds"] if c["channel_id"] == ch_id), net_config["feeds"][0])
             stop_dt = parse_xmltv_date(p.attrib.get("stop", ""), cfg["tz"])
+            
             if stop_dt and stop_dt < cutoff_date:
                 root.remove(p)
 
-        # Ordenar por fecha
+        # Ordenar eventos cronológicamente
         sorted_progs = sorted(root.findall("programme"), key=lambda x: x.attrib.get("start", ""))
         for p in list(root.findall("programme")):
             root.remove(p)
